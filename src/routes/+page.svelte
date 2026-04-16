@@ -10,10 +10,10 @@
     interface SolveResponse {
         name: string;
         coeffs: number[];
-        s: number; // Среднеквадратичное отклонение
-        r2: number; // Коэффициент детерминации
-        pearson?: number; // только для линейной
-        message: string; // Текст про точность R2
+        s: number;
+        r2: number;
+        pearson?: number;
+        message: string;
         x_values: number[];
         y_values: number[];
         phi_values: number[];
@@ -57,7 +57,6 @@
             const _mode = inputMode;
             const _pts = manualPoints.map(p => `${p.x},${p.y}`).join(';'); 
             const _res = results;
-			console.log(_res.length)
             drawPlot();
         }
     });
@@ -69,6 +68,8 @@
             const data: any[] = [];
             
             const currentPoints = inputMode === 'function' ? generatePoints().points : manualPoints;
+            if (currentPoints.length === 0) return;
+
             const xVals = currentPoints.map(p => p.x);
             const yVals = currentPoints.map(p => p.y);
             
@@ -93,7 +94,7 @@
                 points: currentPoints.map((point) => [point.x, point.y]),
                 fnType: 'points',
                 graphType: 'scatter',
-                color: '#4caf00', // Зеленый
+                color: '#4caf00',
                 attr: {
                     r: 4, 
                     stroke: 'black',
@@ -145,10 +146,9 @@
             const data = await res.json();
 
             if (!res.ok) {
-                throw new Error(`Ошибка: ${data.error}` || `Ошибка сервера: ${res.status}`);
+                throw new Error(data.error || `Ошибка сервера: ${res.status}`);
             }
 
-            // Теперь ожидаем массив
             results = data as SolveResponse[];
         } catch (err) {
             errorMsg = err instanceof Error ? err.message : String(err);
@@ -159,9 +159,9 @@
 
     function generatePoints(): Payload {
         const points: Point[] = [];
-		if (h <= 0) {
-			return {points};
-		}
+        if (h <= 0) {
+            return {points};
+        }
         try {
             const code = compile(selectedSingleEq);
             for (let x = a; x <= b + h / 10; x += h) {
@@ -188,8 +188,8 @@
                 return `${f(c[0])} * x ${c[1] < 0 ? '' : '+'}${f(c[1])}`;
             case 'quadratic':
                 return `${f(c[0])} * x^2 + ${f(c[1])} * x ${c[2] < 0 ? '' : '+'}${f(c[2])}`;
-			case 'cubic':
-			    return `${f(c[0])} * x^3 + ${f(c[1])} * x^2 + ${f(c[2])} * x ${c[3] < 0 ? '' : '+'}${f(c[2])}`
+            case 'cubic':
+                return `${f(c[0])} * x^3 + ${f(c[1])} * x^2 + ${f(c[2])} * x ${c[3] < 0 ? '' : '+'}${f(c[3])}`
             case 'exponential':
                 return `${f(c[0])} * exp(${f(c[1])} * x)`;
             case 'logarithmic':
@@ -198,6 +198,64 @@
                 return `${f(c[0])} * x^${f(c[1])}`;
             default:
                 return '';
+        }
+    }
+
+    function handleFileUpload(event: Event) {
+        const target = event.target as HTMLInputElement;
+        const file = target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const content = e.target?.result as string;
+                const parsed = JSON.parse(content);
+
+                // Валидация: является ли массивом
+                if (!Array.isArray(parsed.points)) {
+                    throw new Error("Файл должен содержать массив точек JSON вида [{x: 1, y: 2}, ...]");
+                }
+
+                const points = parsed.points
+
+                if (points.length < 8) {
+                    throw new Error(`Точек не может быть меньше 8. В файле: ${parsed.length}`);
+                }
+
+                // Валидация: правильный формат каждой точки
+                const newPoints: Point[] = [];
+                for (let i = 0; i < points.length; i++) {
+                    const p = points[i];
+                    if (typeof p.x !== 'number' || typeof p.y !== 'number') {
+                        throw new Error(`Неверный формат точки под индексом ${i}. Ожидаются числа: { "x": number, "y": number }`);
+                    }
+                    newPoints.push({ x: p.x, y: p.y });
+                }
+
+                // Обновляем массив точек и сбрасываем ошибку, если была
+                manualPoints = newPoints;
+                errorMsg = null;
+            } catch (err) {
+                errorMsg = err instanceof Error ? err.message : "Ошибка при парсинге JSON файла.";
+            } finally {
+                // Очищаем input, чтобы можно было загрузить тот же файл снова после исправления
+                target.value = '';
+            }
+        };
+        reader.readAsText(file);
+    }
+    function addPoint() {
+        if (manualPoints.length < 12) {
+            // Генерируем X как +1 от последней точки для удобства
+            const lastX = manualPoints.length > 0 ? manualPoints[manualPoints.length - 1].x : 0;
+            manualPoints = [...manualPoints, { x: lastX + 1, y: 0 }];
+        }
+    }
+
+    function removePoint(index: number) {
+        if (manualPoints.length > 8) {
+            manualPoints = manualPoints.filter((_, i) => i !== index);
         }
     }
 </script>
@@ -214,7 +272,7 @@
                     <input type="radio" bind:group={inputMode} value="function" /> По функции
                 </label>
                 <label>
-                    <input type="radio" bind:group={inputMode} value="points" /> По точкам (8 шт.)
+                    <input type="radio" bind:group={inputMode} value="points" /> По точкам
                 </label>
             </div>
 
@@ -238,16 +296,45 @@
                 </div>
             {:else}
                 <div class="section">
-                    <h3>Ввод точек</h3>
+                    <div class="points-header">
+                        <h3>Ввод точек ({manualPoints.length})</h3>
+                        <div class="file-upload">
+                            <label for="file-upload" class="file-label">📂 Загрузить JSON</label>
+                            <input id="file-upload" type="file" accept=".json" onchange={handleFileUpload} />
+                        </div>
+                    </div>
+                    
                     <div class="points-grid">
                         {#each manualPoints as point, i}
                             <div class="point-input">
-                                <b>№{i+1}</b>
+                                <span class="point-index">{i+1}</span>
                                 <label>X: <input type="number" step="any" bind:value={point.x} /></label>
                                 <label>Y: <input type="number" step="any" bind:value={point.y} /></label>
+                                <button 
+                                    class="btn-delete" 
+                                    onclick={() => removePoint(i)}
+                                    disabled={manualPoints.length <= 8}
+                                    title="Удалить точку"
+                                >
+                                    &times;
+                                </button>
                             </div>
                         {/each}
                     </div>
+
+                    <button 
+                        class="btn-add" 
+                        onclick={addPoint} 
+                        disabled={manualPoints.length >= 12}
+                    >
+                        + Добавить точку
+                    </button>
+                    
+                    {#if manualPoints.length >= 12}
+                        <p class="limit-msg">Достигнут максимум (12 точек)</p>
+                    {:else if manualPoints.length <= 8}
+                        <p class="limit-msg">Минимум 8 точек</p>
+                    {/if}
                 </div>
             {/if}
 
@@ -326,6 +413,7 @@
 </main>
 
 <style>
+    /* Все предыдущие стили сохранены */
     .container {
         max-width: 1200px;
         margin: 0 auto;
@@ -362,6 +450,15 @@
         gap: 5px;
         margin-right: 20px;
         font-weight: bold;
+    }
+    .points-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+    .points-header h3 {
+        margin: 0;
     }
     .points-grid {
         display: grid;
@@ -407,6 +504,24 @@
         border: 1px solid #ccc;
         border-radius: 4px;
     }
+    
+    /* Стили для загрузки файла */
+    .file-upload input[type="file"] {
+        display: none;
+    }
+    .file-label {
+        background: #e9ecef;
+        padding: 6px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        border: 1px solid #ced4da;
+        transition: background 0.2s;
+    }
+    .file-label:hover {
+        background: #dee2e6;
+    }
+
     button {
         padding: 12px 20px;
         background: #007bff;
@@ -501,5 +616,83 @@
         height: 14px;
         border-radius: 3px;
         display: inline-block;
+    }
+    .points-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 15px;
+    }
+    
+    .point-input {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        background: #f0f4f8;
+        padding: 8px;
+        border-radius: 6px;
+        position: relative;
+    }
+
+    .point-index {
+        font-weight: bold;
+        color: #666;
+        min-width: 20px;
+    }
+
+    .point-input label {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        font-size: 12px;
+    }
+
+    .point-input input {
+        width: 55px !important; /* Чуть уже, чтобы влезла кнопка */
+        margin: 0;
+    }
+
+    .btn-delete {
+        background: #ff5252;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        cursor: pointer;
+        font-size: 18px;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s;
+    }
+
+    .btn-delete:hover:not(:disabled) {
+        background: #d32f2f;
+    }
+
+    .btn-delete:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+        opacity: 0.5;
+    }
+
+    .btn-add {
+        background: #4caf50;
+        margin-bottom: 10px;
+    }
+    
+    .btn-add:hover:not(:disabled) {
+        background: #388e3c;
+    }
+
+    .limit-msg {
+        font-size: 12px;
+        color: #666;
+        margin: 0;
+        text-align: center;
+        font-style: italic;
     }
 </style>
